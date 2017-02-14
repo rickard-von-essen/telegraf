@@ -1,5 +1,3 @@
-// +build linux
-
 // Package smartctl is a collector for S.M.A.R.T data for HDD, SSD + NVMe devices, linux only
 // https://www.smartmontools.org/
 package smartctl
@@ -52,8 +50,7 @@ type DiskStats struct {
 // SmartCtl is the struct that stores our disk paths for checking
 type SmartCtl struct {
 	Init       bool
-	SudoPath   string
-	CtlPath    string
+	Path       string
 	Include    []string
 	Exclude    []string
 	Disks      []string
@@ -88,17 +85,17 @@ var sliceFinders = map[string]*regexp.Regexp{
 }
 
 var sampleConfig = `
-  ## smartctl requires installation of the smartmontools for your distro (linux only)
-  ## along with root permission to run. In this collector we presume sudo access to the 
-  ## binary.
+  ## smartctl requires installation of the smartmontools.
   ##
-  ## Users have the ability to specify an list of disk name to include, to exclude, 
+  # path = "/usr/local/bin/smartctl"
+  ##
+  ## Users have the ability to specify an list of disk name to include, to exclude,
   ## or both. In this iteration of the collectors, you must specify the full smartctl
   ## path for the disk, we are not currently supporting regex. For example, to include/exclude
   ## /dev/sda from your list, you would specify:
   ## include = ["/dev/sda -d scsi"]
   ## exclude = ['/dev/sda -d scsi"]
-  ## 
+  ##
   ## NOTE: If you specify an include list, this will skip the smartctl --scan function
   ## and only collect for those you've requested (minus any exclusions).
   include = ["/dev/bus/0 -d megaraid,24"]
@@ -213,11 +210,12 @@ func (s *SmartCtl) parseDisks(each string, c chan<- Disk, e chan<- DiskFail) {
 	}
 
 	disk := strings.Split(each, " ")
-	cmd := []string{s.CtlPath, "-x"}
+
+	cmd := []string{"-x"}
 	cmd = append(cmd, disk...)
 
 	data = Disk{Name: "empty"}
-	if out, err = exec.Command(s.SudoPath, cmd...).CombinedOutput(); err != nil {
+	if out, err = exec.Command(s.Path, cmd...).CombinedOutput(); err != nil {
 		e <- DiskFail{Name: each, Error: fmt.Errorf("[ERROR] could not collect (%s), err: %v\n", each, err)}
 		return
 	}
@@ -300,14 +298,12 @@ func (s *SmartCtl) splitDisks(out string) (disks []string) {
 func (s *SmartCtl) gatherDisks() (err error) {
 	var out []byte
 
-	cmd := []string{s.CtlPath, "--scan"}
-
-	if out, err = exec.Command(s.SudoPath, cmd...).CombinedOutput(); err != nil {
+	if out, err = exec.Command(s.Path, []string{"--scan"}...).CombinedOutput(); err != nil {
 		return fmt.Errorf("[ERROR] Could not gather disks from smartctl --scan: %v\n", err)
 	}
 
 	s.Disks = s.splitDisks(string(out))
-
+	fmt.Printf("DEBUG: disks: %v\n", strings.Join(s.Disks, "|"))
 	return nil
 }
 
@@ -334,12 +330,7 @@ func (s *SmartCtl) ExcludeDisks() (disks []string) {
 
 // initStruct is a private function to confirm we have smartctl reqs installed/accessible
 func (s *SmartCtl) initStruct() (err error) {
-	if s.SudoPath, err = exec.LookPath("sudo"); err != nil {
-		s.Init = false
-		return fmt.Errorf("could not pull path for 'sudo': %v\n", err)
-	}
-
-	if s.CtlPath, err = exec.LookPath("smartctl"); err != nil {
+	if s.Path, err = exec.LookPath("smartctl"); err != nil {
 		s.Init = false
 		return fmt.Errorf("could not pull path for 'smartctl': %v\n", err)
 	}

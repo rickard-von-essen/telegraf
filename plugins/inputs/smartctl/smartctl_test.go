@@ -1,5 +1,3 @@
-// +build linux
-
 // Package smartctl is a collector for S.M.A.R.T data for HDD, SSD + NVMe devices, linux only
 // https://www.smartmontools.org/
 package smartctl
@@ -91,8 +89,7 @@ func TestSmartCtl_GatherExclude(t *testing.T) {
 // TestSmartCtl_ParseDisks checks whether we can parse any of the data at all
 func TestSmartCtl_ParseDisks(t *testing.T) {
 	tester := bencher
-	tester.SudoPath, _ = exec.LookPath("sudo")
-	tester.CtlPath, _ = exec.LookPath("smartctl")
+	tester.Path, _ = exec.LookPath("smartctl")
 
 	if err := tester.ParseDisks(); err != nil {
 		t.Errorf("[ERROR] Unable to parse disks from the system: %v\n", err)
