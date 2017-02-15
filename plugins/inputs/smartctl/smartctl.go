@@ -49,7 +49,6 @@ type DiskStats struct {
 
 // SmartCtl is the struct that stores our disk paths for checking
 type SmartCtl struct {
-	Init       bool
 	Path       string
 	Include    []string
 	Exclude    []string
@@ -328,17 +327,28 @@ func (s *SmartCtl) ExcludeDisks() (disks []string) {
 	return disks
 }
 
-// initStruct is a private function to confirm we have smartctl reqs installed/accessible
-func (s *SmartCtl) initStruct() (err error) {
-	if s.Path, err = exec.LookPath("smartctl"); err != nil {
-		s.Init = false
-		return fmt.Errorf("could not pull path for 'smartctl': %v\n", err)
+// init adds the smartctl collector as an input to telegraf
+func init() {
+	m := SmartCtl{}
+
+	path, _ := exec.LookPath("smartctl")
+	if len(path) > 0 {
+		m.Path = path
 	}
+
+	inputs.Add("smartctl", func() telegraf.Input {
+		return &m
+	})
+}
+
+// Gather is the primary function to collect smartctl data
+func (s *SmartCtl) Gather(acc telegraf.Accumulator) error {
+	var health float64
 
 	// NOTE: if we specify the Include list in the config, this will skip the smartctl --scan
 	if len(s.Include) > 0 {
 		s.Disks = s.splitDisks(strings.Join(s.Include, "\n"))
-	} else if err = s.gatherDisks(); err != nil {
+	} else if err := s.gatherDisks(); err != nil {
 		return err
 	}
 
@@ -349,28 +359,8 @@ func (s *SmartCtl) initStruct() (err error) {
 	s.DiskOutput = make(map[string]Disk, len(s.Disks))
 	s.DiskFailed = make(map[string]error)
 
-	s.Init = true
-
-	return nil
-}
-
-// init adds the smartctl collector as an input to telegraf
-func init() {
-	inputs.Add("smartctl", func() telegraf.Input { return &SmartCtl{} })
-}
-
-// Gather is the primary function to collect smartctl data
-func (s *SmartCtl) Gather(acc telegraf.Accumulator) (err error) {
-	var health float64
-
-	if !s.Init {
-		if err = s.initStruct(); err != nil {
-			return fmt.Errorf("could not initialize smartctl plugin: %v\n", err)
-		}
-	}
-
 	// actually gather the stats
-	if err = s.ParseDisks(); err != nil {
+	if err := s.ParseDisks(); err != nil {
 		return fmt.Errorf("could not parse all the disks in our list: %v\n", err)
 	}
 

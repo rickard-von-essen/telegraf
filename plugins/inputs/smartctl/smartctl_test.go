@@ -11,11 +11,12 @@ import (
 	"testing"
 
 	"github.com/influxdata/telegraf/testutil"
+	_ "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var bencher = &SmartCtl{
 	Disks:      []string{"/dev/sda -d scsi", "/dev/bus/0 -d megaraid,4", "/dev/bus/0 -d megaraid,24"},
-	Init:       true,
 	DiskOutput: make(map[string]Disk, 3),
 	DiskFailed: make(map[string]error),
 }
@@ -23,29 +24,17 @@ var bencher = &SmartCtl{
 // TestSmartCtl_Gather sends a naked SmartCtl function to the machine to see how data can parse. Virtually
 // any output is accepted here, provided it's not an err
 func TestSmartCtl_Gather(t *testing.T) {
-	tester := &SmartCtl{}
+	tester := &SmartCtl{Path: "/usr/bin/true"} // TODO properly mock smartctl commands
 
 	acc := new(testutil.Accumulator)
 	err := tester.Gather(acc)
-
-	if err != nil {
-		if strings.Contains(fmt.Sprintf("%v", err), "executable") {
-			t.Logf("[INFO] smartctl binary doesn't exist, but in testmode we continue: %v", err)
-		} else {
-			t.Errorf("[ERROR] Did not expect error, but received err: %v, data: %v\n", err, tester.DiskFailed)
-		}
-	} else if len(tester.DiskFailed) > 0 {
-		t.Logf("[INFO] Did not receive error, but some disks failed: %v, init: %t, output: %#v\n", tester.DiskFailed, tester.Init, tester.Disks)
-	} else {
-		t.Logf("[INFO]  init: %t, output: %#v, len: %d\n", tester.Init, tester.Disks, len(tester.Disks))
-	}
+	require.NoError(t, err)
 }
 
 // TestSmartCtl_GatherInclude sends a specific disk name in the Include portion to Gather, which
 // should skip smartctl --scan altogether; we fail if err != nil or the disklist returned is > 1
 func TestSmartCtl_GatherInclude(t *testing.T) {
 	tester := bencher
-	tester.Init = false
 	tester.Include = []string{"/dev/myrandomtester -d scsi"}
 
 	acc := new(testutil.Accumulator)
@@ -191,7 +180,7 @@ func BenchmarkExcludeDisks(b *testing.B) {
 		"/dev/bus/0 -d megaraid,23",
 		"/dev/bus/0 -d megaraid,24",
 		"/dev/bus/0 -d megaraid,25",
-	}, Exclude: []string{"/dev/bus/0 -d megaraid,21"}, Init: true}
+	}, Exclude: []string{"/dev/bus/0 -d megaraid,21"}}
 
 	for n := 0; n < b.N; n++ {
 		tester.ExcludeDisks()
