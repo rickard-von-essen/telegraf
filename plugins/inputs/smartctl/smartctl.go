@@ -15,36 +15,36 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// Disk is the struct to capture the specifics of a given device
+// disk is the struct to capture the specifics of a given device
 // It will store some basic information plus anything extended queries return
-type Disk struct {
-	Name      string
-	Vendor    string
-	Product   string
-	Block     string
-	Serial    string
-	Rotation  string
-	Transport string
-	Health    string
-	ReadCache string
-	Writeback string
-	RawData   bytes.Buffer
-	Stats     DiskStats
+type disk struct {
+	name      string
+	vendor    string
+	product   string
+	block     string
+	serial    string
+	rotation  string
+	transport string
+	health    string
+	readCache string
+	writeback string
+	rawData   bytes.Buffer
+	stats     diskStats
 }
 
-// DiskFail is the struct to return from our goroutine parseDisks
-type DiskFail struct {
-	Name  string
-	Error error
+// diskFail is the struct to return from our goroutine parseDisks
+type diskFail struct {
+	name string
+	err  error
 }
 
-// DiskStats is the set of fields we'll be collecting from smartctl
-type DiskStats struct {
-	CurrentTemp float64
-	MaxTemp     float64
-	ReadError   []float64
-	WriteError  []float64
-	VerifyError []float64
+// diskStats is the set of fields we'll be collecting from smartctl
+type diskStats struct {
+	currentTemp float64
+	maxTemp     float64
+	readError   []float64
+	writeError  []float64
+	verifyError []float64
 }
 
 // SmartCtl is the struct that stores our disk paths for checking
@@ -52,9 +52,9 @@ type SmartCtl struct {
 	Path       string
 	Include    []string
 	Exclude    []string
-	Disks      []string
-	DiskOutput map[string]Disk
-	DiskFailed map[string]error
+	disks      []string
+	diskOutput map[string]disk
+	diskFailed map[string]error
 }
 
 // tagFinders is a global map of Disk struct elements to corresponding regexp
@@ -108,12 +108,12 @@ func (s *SmartCtl) SampleConfig() string {
 
 // Description returns a preformatted string outlining the smartctl collector
 func (s *SmartCtl) Description() string {
-	return "Use the linux smartmontool to determine HDD, SSD or NVMe physical status"
+	return "Use the smartctl (smartmontool) to determine HDD, SSD or NVMe physical status"
 }
 
-// ParseString is a generic function that takes a given regexp and applies to a buf, placing
+// parseString is a generic function that takes a given regexp and applies to a buf, placing
 // output into the dataVar
-func (s *SmartCtl) ParseString(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *string) {
+func (s *SmartCtl) parseString(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *string) {
 	str := regexp.FindStringSubmatch((*buf).String())
 
 	if len(str) > 1 {
@@ -126,7 +126,7 @@ func (s *SmartCtl) ParseString(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar
 
 // ParseStringSlice is a generic function that takes a given regexp and applies to a buf, placing
 // output into the dataVar
-func (s *SmartCtl) ParseStringSlice(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *[]string) {
+func (s *SmartCtl) parseStringSlice(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *[]string) {
 	str := regexp.FindStringSubmatch((*buf).String())
 
 	if len(str) > 1 {
@@ -134,12 +134,13 @@ func (s *SmartCtl) ParseStringSlice(regexp *regexp.Regexp, buf *bytes.Buffer, da
 	}
 }
 
-// ParseFloat is a generic function that takes a given regexp and applies to a buf, placing
+// parseFloat is a generic function that takes a given regexp and applies to a buf, placing
 // output into the dataVar
-func (s *SmartCtl) ParseFloat(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *float64) (err error) {
+func (s *SmartCtl) parseFloat(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *float64) error {
 	str := regexp.FindStringSubmatch((*buf).String())
 
 	if len(str) > 1 {
+		var err error
 		*dataVar, err = strconv.ParseFloat(str[1], 64)
 		if err != nil {
 			return fmt.Errorf("[ERROR] Could not convert string (%s) to float64: %v\n", str[1], err)
@@ -149,12 +150,13 @@ func (s *SmartCtl) ParseFloat(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar 
 	return nil
 }
 
-// ParseFloatSlice is a generic function that takes a given regexp and applies to a buf, placing
+// parseFloatSlice is a generic function that takes a given regexp and applies to a buf, placing
 // output into the dataVar
-func (s *SmartCtl) ParseFloatSlice(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *[]float64) (err error) {
+func (s *SmartCtl) parseFloatSlice(regexp *regexp.Regexp, buf *bytes.Buffer, dataVar *[]float64) error {
 	var errors []string
 	var values []float64
 	var val float64
+	var err error
 
 	str := regexp.FindStringSubmatch((*buf).String())
 
@@ -179,33 +181,31 @@ func (s *SmartCtl) ParseFloatSlice(regexp *regexp.Regexp, buf *bytes.Buffer, dat
 }
 
 // parseDisks is a private function that we call for our goroutine
-func (s *SmartCtl) parseDisks(each string, c chan<- Disk, e chan<- DiskFail) {
-	var out []byte
-	var data Disk
-	var stats DiskStats
-	var err error
+func (s *SmartCtl) parseDisks(each string, c chan<- disk, e chan<- diskFail) {
 
+	data := disk{name: "empty"}
 	var tagMap = map[string]*string{
-		"Vendor":    &data.Vendor,
-		"Product":   &data.Product,
-		"Block":     &data.Block,
-		"Serial":    &data.Serial,
-		"Rotation":  &data.Rotation,
-		"Transport": &data.Transport,
-		"Health":    &data.Health,
-		"ReadCache": &data.ReadCache,
-		"Writeback": &data.Writeback,
+		"Vendor":    &data.vendor,
+		"Product":   &data.product,
+		"Block":     &data.block,
+		"Serial":    &data.serial,
+		"Rotation":  &data.rotation,
+		"Transport": &data.transport,
+		"Health":    &data.health,
+		"ReadCache": &data.readCache,
+		"Writeback": &data.writeback,
 	}
 
+	var stats diskStats
 	var fieldMap = map[string]*float64{
-		"CurrentTemp": &stats.CurrentTemp,
-		"MaxTemp":     &stats.MaxTemp,
+		"CurrentTemp": &stats.currentTemp,
+		"MaxTemp":     &stats.maxTemp,
 	}
 
 	var sliceMap = map[string]*[]float64{
-		"ReadError":   &stats.ReadError,
-		"WriteError":  &stats.WriteError,
-		"VerifyError": &stats.VerifyError,
+		"ReadError":   &stats.readError,
+		"WriteError":  &stats.writeError,
+		"VerifyError": &stats.verifyError,
 	}
 
 	disk := strings.Split(each, " ")
@@ -213,79 +213,81 @@ func (s *SmartCtl) parseDisks(each string, c chan<- Disk, e chan<- DiskFail) {
 	cmd := []string{"-x"}
 	cmd = append(cmd, disk...)
 
-	data = Disk{Name: "empty"}
+	var out []byte
+	var err error
 	if out, err = exec.Command(s.Path, cmd...).CombinedOutput(); err != nil {
-		e <- DiskFail{Name: each, Error: fmt.Errorf("[ERROR] could not collect (%s), err: %v\n", each, err)}
+		e <- diskFail{name: each, err: fmt.Errorf("[ERROR] could not collect (%s), err: %v\n", each, err)}
 		return
 	}
 
-	if _, err = data.RawData.Write(out); err != nil {
-		e <- DiskFail{Name: each, Error: fmt.Errorf("[ERROR] could not commit raw data to struct (%s): %v\n", each, err)}
+	if _, err := data.rawData.Write(out); err != nil {
+		e <- diskFail{name: each, err: fmt.Errorf("[ERROR] could not commit raw data to struct (%s): %v\n", each, err)}
 		return
 	}
 
 	if len(disk) > 2 {
-		data.Name = strings.Replace(fmt.Sprintf("%s_%s", disk[0], disk[2]), ",", "_", -1)
+		data.name = strings.Replace(fmt.Sprintf("%s_%s", disk[0], disk[2]), ",", "_", -1)
 	} else {
-		data.Name = strings.Replace(disk[0], ",", "_", -1)
+		data.name = strings.Replace(disk[0], ",", "_", -1)
 	}
 
 	// NOTE: for this loop to work you must keep the idx + Disk element names equal
 	for idx := range tagFinders {
-		s.ParseString(tagFinders[idx], &data.RawData, tagMap[idx])
+		s.parseString(tagFinders[idx], &data.rawData, tagMap[idx])
 	}
 
-	stats = DiskStats{}
+	stats = diskStats{}
 	for idx := range fieldFinders {
-		if err = s.ParseFloat(fieldFinders[idx], &data.RawData, fieldMap[idx]); err != nil {
-			fmt.Printf("[ERROR] ParseFloat: %v\n", err)
+		if err := s.parseFloat(fieldFinders[idx], &data.rawData, fieldMap[idx]); err != nil {
+			fmt.Printf("[ERROR] parseFloat: %v\n", err)
 		}
 	}
 
 	for idx := range sliceFinders {
-		if err = s.ParseFloatSlice(sliceFinders[idx], &data.RawData, sliceMap[idx]); err != nil {
-			fmt.Printf("[ERROR] ParseFloatSlice: %v\n", err)
+		if err := s.parseFloatSlice(sliceFinders[idx], &data.rawData, sliceMap[idx]); err != nil {
+			fmt.Printf("[ERROR] parseFloatSlice: %v\n", err)
 		}
 	}
 
-	data.Stats = stats
+	data.stats = stats
 	c <- data
 }
 
-// ParseDisks takes in a list of Disks and accumulates the smartctl info where possible for each entry
-func (s *SmartCtl) ParseDisks() (err error) {
-	c := make(chan Disk, len(s.Disks))
-	e := make(chan DiskFail, len(s.Disks))
+// parseDisks takes in a list of disks and accumulates the smartctl info where possible for each entry
+func (s *SmartCtl) parseDisks2() error {
+	c := make(chan disk, len(s.disks))
+	e := make(chan diskFail, len(s.disks))
 	var a int
 
-	for _, each := range s.Disks {
+	for _, each := range s.disks {
 		go s.parseDisks(each, c, e)
 	}
 
 	for {
-		if a == len(s.Disks) {
+		if a == len(s.disks) {
 			break
 		}
 
 		select {
 		case data := <-c:
-			if len(data.Name) > 0 && data.Name != "empty" {
-				s.DiskOutput[data.Name] = data
+			if len(data.name) > 0 && data.name != "empty" {
+				s.diskOutput[data.name] = data
 			}
 			a++
 		case err := <-e:
-			s.DiskFailed[err.Name] = err.Error
+			s.diskFailed[err.name] = err.err
 			a++
 		default:
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 
-	return err
+	return nil
 }
 
 // splitDisks is a private helper function to parse out the disks we care about
-func (s *SmartCtl) splitDisks(out string) (disks []string) {
+func (s *SmartCtl) splitDisks(out string) []string {
+	var disks []string
 	for _, each := range strings.Split(out, "\n") {
 		if len(each) > 0 {
 			disks = append(disks, strings.Split(each, " #")[0])
@@ -294,23 +296,24 @@ func (s *SmartCtl) splitDisks(out string) (disks []string) {
 	return disks
 }
 
-func (s *SmartCtl) gatherDisks() (err error) {
+func (s *SmartCtl) gatherDisks() error {
 	var out []byte
+	var err error
 
 	if out, err = exec.Command(s.Path, []string{"--scan"}...).CombinedOutput(); err != nil {
 		return fmt.Errorf("[ERROR] Could not gather disks from smartctl --scan: %v\n", err)
 	}
 
-	s.Disks = s.splitDisks(string(out))
-	fmt.Printf("DEBUG: disks: %v\n", strings.Join(s.Disks, "|"))
+	s.disks = s.splitDisks(string(out))
+	fmt.Printf("DEBUG: disks: %v\n", strings.Join(s.disks, "|"))
 	return nil
 }
 
-// ExcludeDisks is a private function to reduce the set of disks to query against
-func (s *SmartCtl) ExcludeDisks() (disks []string) {
+// excludeDisks is a private function to reduce the set of disks to query against
+func (s *SmartCtl) excludeDisks() []string {
 	elems := make(map[string]bool)
 
-	for _, each := range s.Disks {
+	for _, each := range s.disks {
 		elems[each] = false
 	}
 
@@ -320,6 +323,7 @@ func (s *SmartCtl) ExcludeDisks() (disks []string) {
 		}
 	}
 
+	disks := []string{}
 	for key := range elems {
 		disks = append(disks, key)
 	}
@@ -347,37 +351,37 @@ func (s *SmartCtl) Gather(acc telegraf.Accumulator) error {
 
 	// NOTE: if we specify the Include list in the config, this will skip the smartctl --scan
 	if len(s.Include) > 0 {
-		s.Disks = s.splitDisks(strings.Join(s.Include, "\n"))
+		s.disks = s.splitDisks(strings.Join(s.Include, "\n"))
 	} else if err := s.gatherDisks(); err != nil {
 		return err
 	}
 
 	if len(s.Exclude) > 0 {
-		s.Disks = s.ExcludeDisks()
+		s.disks = s.excludeDisks()
 	}
 
-	s.DiskOutput = make(map[string]Disk, len(s.Disks))
-	s.DiskFailed = make(map[string]error)
+	s.diskOutput = make(map[string]disk, len(s.disks))
+	s.diskFailed = make(map[string]error)
 
 	// actually gather the stats
-	if err := s.ParseDisks(); err != nil {
+	if err := s.parseDisks2(); err != nil {
 		return fmt.Errorf("could not parse all the disks in our list: %v\n", err)
 	}
 
-	for _, each := range s.DiskOutput {
+	for _, each := range s.diskOutput {
 		tags := map[string]string{
-			"name":       each.Name,
-			"vendor":     each.Vendor,
-			"product":    each.Product,
-			"block_size": each.Block,
-			"serial":     each.Serial,
-			"rpm":        each.Rotation,
-			"transport":  each.Transport,
-			"read_cache": each.ReadCache,
-			"writeback":  each.Writeback,
+			"name":       each.name,
+			"vendor":     each.vendor,
+			"product":    each.product,
+			"block_size": each.block,
+			"serial":     each.serial,
+			"rpm":        each.rotation,
+			"transport":  each.transport,
+			"read_cache": each.readCache,
+			"writeback":  each.writeback,
 		}
 
-		if each.Health == "OK" {
+		if each.health == "OK" {
 			health = 1.0
 		} else {
 			health = 0.0
@@ -385,40 +389,40 @@ func (s *SmartCtl) Gather(acc telegraf.Accumulator) error {
 
 		fields := make(map[string]interface{})
 		fields["health"] = health
-		fields["current_temp"] = each.Stats.CurrentTemp
-		fields["max_temp"] = each.Stats.MaxTemp
+		fields["current_temp"] = each.stats.currentTemp
+		fields["max_temp"] = each.stats.maxTemp
 
 		// add the read error row
-		if len(each.Stats.ReadError) == 7 {
-			fields["ecc_corr_fast_read"] = each.Stats.ReadError[0]
-			fields["ecc_corr_delay_read"] = each.Stats.ReadError[1]
-			fields["ecc_reread"] = each.Stats.ReadError[2]
-			fields["total_err_corr_read"] = each.Stats.ReadError[3]
-			fields["corr_algo_read"] = each.Stats.ReadError[4]
-			fields["data_read"] = each.Stats.ReadError[5]
-			fields["uncorr_err_read"] = each.Stats.ReadError[6]
+		if len(each.stats.readError) == 7 {
+			fields["ecc_corr_fast_read"] = each.stats.readError[0]
+			fields["ecc_corr_delay_read"] = each.stats.readError[1]
+			fields["ecc_reread"] = each.stats.readError[2]
+			fields["total_err_corr_read"] = each.stats.readError[3]
+			fields["corr_algo_read"] = each.stats.readError[4]
+			fields["data_read"] = each.stats.readError[5]
+			fields["uncorr_err_read"] = each.stats.readError[6]
 		}
 
 		// add the write error row
-		if len(each.Stats.WriteError) == 7 {
-			fields["ecc_corr_fast_write"] = each.Stats.WriteError[0]
-			fields["ecc_corr_delay_write"] = each.Stats.WriteError[1]
-			fields["ecc_rewrite"] = each.Stats.WriteError[2]
-			fields["total_err_corr_write"] = each.Stats.WriteError[3]
-			fields["corr_algo_write"] = each.Stats.WriteError[4]
-			fields["data_write"] = each.Stats.WriteError[5]
-			fields["uncorr_err_write"] = each.Stats.WriteError[6]
+		if len(each.stats.writeError) == 7 {
+			fields["ecc_corr_fast_write"] = each.stats.writeError[0]
+			fields["ecc_corr_delay_write"] = each.stats.writeError[1]
+			fields["ecc_rewrite"] = each.stats.writeError[2]
+			fields["total_err_corr_write"] = each.stats.writeError[3]
+			fields["corr_algo_write"] = each.stats.writeError[4]
+			fields["data_write"] = each.stats.writeError[5]
+			fields["uncorr_err_write"] = each.stats.writeError[6]
 		}
 
 		// add the verify error row
-		if len(each.Stats.VerifyError) == 7 {
-			fields["ecc_corr_fast_verify"] = each.Stats.VerifyError[0]
-			fields["ecc_corr_delay_verify"] = each.Stats.VerifyError[1]
-			fields["ecc_reverify"] = each.Stats.VerifyError[2]
-			fields["total_err_corr_verify"] = each.Stats.VerifyError[3]
-			fields["corr_algo_verify"] = each.Stats.VerifyError[4]
-			fields["data_verify"] = each.Stats.VerifyError[5]
-			fields["uncorr_err_verify"] = each.Stats.VerifyError[6]
+		if len(each.stats.verifyError) == 7 {
+			fields["ecc_corr_fast_verify"] = each.stats.verifyError[0]
+			fields["ecc_corr_delay_verify"] = each.stats.verifyError[1]
+			fields["ecc_reverify"] = each.stats.verifyError[2]
+			fields["total_err_corr_verify"] = each.stats.verifyError[3]
+			fields["corr_algo_verify"] = each.stats.verifyError[4]
+			fields["data_verify"] = each.stats.verifyError[5]
+			fields["uncorr_err_verify"] = each.stats.verifyError[6]
 		}
 
 		acc.AddFields("smartctl", fields, tags)

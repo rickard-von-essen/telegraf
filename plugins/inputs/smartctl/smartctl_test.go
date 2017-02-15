@@ -16,9 +16,9 @@ import (
 )
 
 var bencher = &SmartCtl{
-	Disks:      []string{"/dev/sda -d scsi", "/dev/bus/0 -d megaraid,4", "/dev/bus/0 -d megaraid,24"},
-	DiskOutput: make(map[string]Disk, 3),
-	DiskFailed: make(map[string]error),
+	disks:      []string{"/dev/sda -d scsi", "/dev/bus/0 -d megaraid,4", "/dev/bus/0 -d megaraid,24"},
+	diskOutput: make(map[string]disk, 3),
+	diskFailed: make(map[string]error),
 }
 
 // TestSmartCtl_Gather sends a naked SmartCtl function to the machine to see how data can parse. Virtually
@@ -44,12 +44,12 @@ func TestSmartCtl_GatherInclude(t *testing.T) {
 		if strings.Contains(fmt.Sprintf("%v", err), "executable") {
 			t.Logf("[INFO] smartctl binary doesn't exist, but in testmode we continue: %v", err)
 		} else {
-			t.Errorf("[ERROR] Did not expect error, but received err: %v, data: %v\n", err, tester.DiskFailed)
+			t.Errorf("[ERROR] Did not expect error, but received err: %v, data: %v\n", err, tester.diskFailed)
 		}
 	}
 
-	if len(tester.DiskFailed) > 1 {
-		t.Errorf("[ERROR] len of failures should be 1 (/dev/sdc only), include: %v, disks: %v\n", tester.Include, tester.Disks)
+	if len(tester.diskFailed) > 1 {
+		t.Errorf("[ERROR] len of failures should be 1 (/dev/sdc only), include: %v, disks: %v\n", tester.Include, tester.disks)
 	}
 }
 
@@ -66,12 +66,12 @@ func TestSmartCtl_GatherExclude(t *testing.T) {
 		if strings.Contains(fmt.Sprintf("%v", err), "executable") {
 			t.Logf("[INFO] smartctl binary doesn't exist, but in testmode we continue: %v", err)
 		} else {
-			t.Errorf("[ERROR] Did not expect error, but received err: %v, data: %v\n", err, tester.DiskFailed)
+			t.Errorf("[ERROR] Did not expect error, but received err: %v, data: %v\n", err, tester.diskFailed)
 		}
 	}
 
-	if len(tester.DiskOutput) > 0 {
-		t.Errorf("[ERROR] Disks should have cancelled out, include: %v, exclude: %v, disks: %v\n", tester.Include, tester.Exclude, tester.Disks)
+	if len(tester.diskOutput) > 0 {
+		t.Errorf("[ERROR] Disks should have cancelled out, include: %v, exclude: %v, disks: %v\n", tester.Include, tester.Exclude, tester.disks)
 	}
 }
 
@@ -80,21 +80,21 @@ func TestSmartCtl_ParseDisks(t *testing.T) {
 	tester := bencher
 	tester.Path, _ = exec.LookPath("smartctl")
 
-	if err := tester.ParseDisks(); err != nil {
+	if err := tester.parseDisks2(); err != nil {
 		t.Errorf("[ERROR] Unable to parse disks from the system: %v\n", err)
 	}
 
-	if len(tester.DiskFailed) > 0 {
-		t.Logf("[INFO]  Did not get a good result back from ParseDisks: %v\n", tester.DiskFailed)
+	if len(tester.diskFailed) > 0 {
+		t.Logf("[INFO]  Did not get a good result back from ParseDisks: %v\n", tester.diskFailed)
 	}
 
-	if len(tester.DiskOutput) > 0 {
+	if len(tester.diskOutput) > 0 {
 		t.Logf("[INFO]  We parsed the disk info:\n")
 
-		for _, each := range tester.DiskOutput {
+		for _, each := range tester.diskOutput {
 			t.Logf("[%s] vendor: %s, product: %s, block: %s, serial: %s, rotation: %s, transport: %s, health: %s\n",
-				each.Name, each.Vendor, each.Product, each.Block, each.Serial, each.Rotation, each.Transport, each.Health)
-			t.Logf("[%s] stats: %#v\n", each.Name, each.Stats)
+				each.name, each.vendor, each.product, each.block, each.serial, each.rotation, each.transport, each.health)
+			t.Logf("[%s] stats: %#v\n", each.name, each.stats)
 		}
 	}
 }
@@ -108,7 +108,7 @@ func BenchmarkParseString(b *testing.B) {
 	findVendor := regexp.MustCompile(`Vendor:\s+(\w+)`)
 
 	for n := 0; n < b.N; n++ {
-		bencher.ParseString(findVendor, &buf, &str)
+		bencher.parseString(findVendor, &buf, &str)
 	}
 }
 
@@ -121,7 +121,7 @@ func BenchmarkParseStringSlice(b *testing.B) {
 	findVerify := regexp.MustCompile(`verify:\s+(.*)\n`)
 
 	for n := 0; n < b.N; n++ {
-		bencher.ParseStringSlice(findVerify, &buf, &str)
+		bencher.parseStringSlice(findVerify, &buf, &str)
 	}
 }
 
@@ -134,7 +134,7 @@ func BenchmarkParseFloat(b *testing.B) {
 	findTemp := regexp.MustCompile(`Current Drive Temperature:\s+([0-9]+)`)
 
 	for n := 0; n < b.N; n++ {
-		bencher.ParseFloat(findTemp, &buf, &val)
+		bencher.parseFloat(findTemp, &buf, &val)
 	}
 }
 
@@ -147,13 +147,13 @@ func BenchmarkParseFloatSlice(b *testing.B) {
 	findVerify := regexp.MustCompile(`verify:\s+(.*)\n`)
 
 	for n := 0; n < b.N; n++ {
-		bencher.ParseFloatSlice(findVerify, &buf, &val)
+		bencher.parseFloatSlice(findVerify, &buf, &val)
 	}
 }
 
 // BenchmarkExcludeDisks checks how quickly we can drill down to the set of disks to parse for
 func BenchmarkExcludeDisks(b *testing.B) {
-	tester := &SmartCtl{Disks: []string{
+	tester := &SmartCtl{disks: []string{
 		"/dev/bus/0 -d megaraid,0",
 		"/dev/bus/0 -d megaraid,1",
 		"/dev/bus/0 -d megaraid,2",
@@ -183,7 +183,7 @@ func BenchmarkExcludeDisks(b *testing.B) {
 	}, Exclude: []string{"/dev/bus/0 -d megaraid,21"}}
 
 	for n := 0; n < b.N; n++ {
-		tester.ExcludeDisks()
+		tester.excludeDisks()
 	}
 }
 
